@@ -1,35 +1,35 @@
 import streamlit as st
 import pandas as pd
-import fitz
 import re
 
-from PIL import Image
-from pyzbar.pyzbar import decode
-
 st.set_page_config(
-    page_title="FedEx Tracking Extractor"
+    page_title="FedEx Tracking Extractor",
+    layout="wide"
 )
 
 st.title("FedEx Tracking Extractor")
 
-files = st.file_uploader(
-    "PDF 또는 ZPL 업로드",
-    accept_multiple_files=True
-)
+# =====================================
+# Session State 초기화
+# =====================================
 
-results = set()
+if "files" not in st.session_state:
+    st.session_state.files = {}
 
+if "tracking_numbers" not in st.session_state:
+    st.session_state.tracking_numbers = set()
 
-def extract_zpl(text):
+# =====================================
+# 함수
+# =====================================
+
+def extract_tracking_from_zpl(text):
 
     matches = set()
 
     patterns = [
-
         r">;?(96\d{32})",
-
         r"31Z(96\d{32})",
-
         r"\b(96\d{32})\b",
     ]
 
@@ -45,101 +45,175 @@ def extract_zpl(text):
     return matches
 
 
-def extract_pdf_barcodes(pdf_bytes):
+# =====================================
+# 상단 메뉴
+# =====================================
 
-    found = set()
+col1, col2 = st.columns([1, 1])
 
-    doc = fitz.open(
-        stream=pdf_bytes,
-        filetype="pdf"
+with col1:
+
+    show_debug = st.checkbox(
+        "Debug 보기",
+        value=False
     )
 
-    for page in doc:
+with col2:
 
-        pix = page.get_pixmap(
-            matrix=fitz.Matrix(
-                4,
-                4
+    if st.button("전체 초기화"):
+
+        st.session_state.files = {}
+        st.session_state.tracking_numbers = set()
+
+        st.rerun()
+
+# =====================================
+# 현재 파일 수
+# =====================================
+
+st.info(
+    f"현재 업로드된 파일 수: {len(st.session_state.files)}개"
+)
+
+# =====================================
+# 파일 업로드
+# =====================================
+
+uploaded_files = st.file_uploader(
+    "PDF 또는 ZPL 업로드",
+    accept_multiple_files=True
+)
+
+if uploaded_files:
+
+    added_count = 0
+    duplicate_count = 0
+
+    for file in uploaded_files:
+
+        if file.name in st.session_state.files:
+
+            duplicate_count += 1
+            continue
+
+        file_bytes = file.getvalue()
+
+        st.session_state.files[file.name] = {
+            "name": file.name,
+            "bytes": file_bytes
+        }
+
+        added_count += 1
+
+    if added_count > 0:
+
+        st.success(
+            f"{added_count}개 파일 추가됨"
+        )
+
+    if duplicate_count > 0:
+
+        st.warning(
+            f"{duplicate_count}개 중복 파일 제외됨"
+        )
+
+# =====================================
+# 현재 파일 목록
+# =====================================
+
+if st.session_state.files:
+
+    with st.expander(
+        f"업로드된 파일 목록 ({len(st.session_state.files)}개)"
+    ):
+
+        for filename in sorted(
+            st.session_state.files.keys()
+        ):
+
+            st.write(filename)
+
+# =====================================
+# 파일 처리
+# =====================================
+
+tracking_numbers = set()
+
+for filename, file_data in st.session_state.files.items():
+
+    numbers_found = set()
+
+    try:
+
+        # ------------------------------
+        # PDF
+        # ------------------------------
+
+        if filename.lower().endswith(".pdf"):
+
+            # PDF 파일명 마지막 12자리 추출
+            match = re.search(
+                r"_(\d{12})\.pdf$",
+                filename,
+                re.IGNORECASE
             )
-        )
 
-        img = Image.frombytes(
-            "RGB",
-            [pix.width, pix.height],
-            pix.samples
-        )
+            if match:
 
-        decoded = decode(img)
+                last12 = match.group(1)
 
-        for barcode in decoded:
+                tracking_number = (
+                    "962208043000093514410087"
+                    + last12
+                )
+
+                numbers_found.add(
+                    tracking_number
+                )
+
+        # ------------------------------
+        # ZPL
+        # ------------------------------
+
+        else:
 
             try:
 
-                data = barcode.data.decode(
-                    "utf-8"
-                )
-
-                fedex = re.findall(
-                    r"96\d{32}",
-                    data
-                )
-
-                found.update(fedex)
-
-            except:
-                pass
-
-    return found
-
-
-if files:
-
-    progress = st.progress(0)
-
-    for i, file in enumerate(files):
-
-        found = set()
-
-        try:
-
-            if file.name.lower().endswith(
-                ".pdf"
-            ):
-
-                pdf_bytes = file.read()
-
-                found.update(
-                    extract_pdf_barcodes(
-                        pdf_bytes
-                    )
-                )
-
-            else:
-
-                text = file.read().decode(
+                text = file_data["bytes"].decode(
                     "utf-8",
                     errors="ignore"
                 )
 
-                found.update(
-                    extract_zpl(text)
+                numbers_found.update(
+                    extract_tracking_from_zpl(text)
                 )
 
-            results.update(found)
+            except Exception:
+                pass
+
+        tracking_numbers.update(
+            numbers_found
+        )
+
+        # ------------------------------
+        # Debug
+        # ------------------------------
+
+        if show_debug:
 
             with st.expander(
-                f"Debug - {file.name}"
+                f"Debug - {filename}"
             ):
 
                 st.write(
-                    f"추출 건수: {len(found)}"
+                    f"추출 건수: {len(numbers_found)}"
                 )
 
-                if found:
+                if numbers_found:
 
                     st.code(
                         "\n".join(
-                            sorted(found)
+                            sorted(numbers_found)
                         )
                     )
 
@@ -149,40 +223,44 @@ if files:
                         "Tracking Number 미발견"
                     )
 
-        except Exception as e:
+    except Exception as e:
 
-            st.error(
-                f"{file.name}: {e}"
-            )
-
-        progress.progress(
-            (i + 1) / len(files)
+        st.error(
+            f"{filename}: {e}"
         )
 
-    if results:
+# =====================================
+# 결과
+# =====================================
 
-        df = pd.DataFrame({
-            "Tracking Number":
-            sorted(results)
-        })
+if tracking_numbers:
 
-        st.success(
-            f"{len(df)}개 추출 완료"
-        )
+    result = sorted(
+        tracking_numbers
+    )
 
-        st.dataframe(df)
+    df = pd.DataFrame({
+        "Tracking Number": result
+    })
 
-        st.download_button(
-            "CSV 다운로드",
-            df.to_csv(
-                index=False
-            ).encode("utf-8-sig"),
-            "tracking_numbers.csv",
-            "text/csv"
-        )
+    st.success(
+        f"{len(result)}개 Tracking Number 추출 완료"
+    )
 
-    else:
+    st.dataframe(
+        df,
+        use_container_width=True
+    )
 
-        st.warning(
-            "추출된 Tracking Number가 없습니다."
-        )
+    csv = df.to_csv(
+        index=False
+    ).encode(
+        "utf-8-sig"
+    )
+
+    st.download_button(
+        label="CSV 다운로드",
+        data=csv,
+        file_name="tracking_numbers.csv",
+        mime="text/csv"
+    )
