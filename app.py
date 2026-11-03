@@ -3,9 +3,9 @@ import pandas as pd
 import re
 import pdfplumber
 
-numbers = []
-
 st.title("Label Tracking Extractor")
+
+numbers = []
 
 files = st.file_uploader(
     "PDF 또는 ZPL 업로드",
@@ -18,34 +18,58 @@ if files:
 
         text = ""
 
-        if file.name.lower().endswith(".pdf"):
+        try:
 
-            with pdfplumber.open(file) as pdf:
-                for page in pdf.pages:
-                    text += page.extract_text() or ""
+            if file.name.lower().endswith(".pdf"):
 
-        else:
-            text = file.read().decode(
-                "utf-8",
-                errors="ignore"
-            )
+                with pdfplumber.open(file) as pdf:
+                    for page in pdf.pages:
+                        text += page.extract_text() or ""
 
-        matches = re.findall(r"96\d{32}", text)
+                # PDF에서 실제 추출된 텍스트 확인
+                with st.expander(f"PDF Debug: {file.name}"):
+                    st.text(text[:5000])
 
-        numbers.extend(matches)
+            else:
+
+                text = file.read().decode(
+                    "utf-8",
+                    errors="ignore"
+                )
+
+            patterns = [
+                r"96\d{32}",      # FedEx 34자리
+                r"\b\d{12}\b",    # 12자리 추적번호
+                r"1Z[0-9A-Z]+"    # UPS
+            ]
+
+            for pattern in patterns:
+                matches = re.findall(pattern, text)
+                numbers.extend(matches)
+
+        except Exception as e:
+            st.error(f"{file.name}: {e}")
 
     numbers = sorted(set(numbers))
 
-    df = pd.DataFrame(
-        {"Tracking Number": numbers}
-    )
+    if numbers:
 
-    st.dataframe(df)
+        df = pd.DataFrame(
+            {"Tracking Number": numbers}
+        )
 
-    csv = df.to_csv(index=False)
+        st.dataframe(df)
 
-    st.download_button(
-        "CSV 다운로드",
-        csv,
-        file_name="tracking_numbers.csv"
-    )
+        csv = df.to_csv(index=False)
+
+        st.download_button(
+            "CSV 다운로드",
+            csv,
+            file_name="tracking_numbers.csv"
+        )
+
+    else:
+
+        st.warning(
+            "추출된 Tracking Number가 없습니다."
+        )
