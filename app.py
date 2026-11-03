@@ -1,24 +1,26 @@
 import streamlit as st
 import pandas as pd
-import pdfplumber
+import fitz
 import re
 
+from PIL import Image
+from pyzbar.pyzbar import decode
+
 st.set_page_config(
-    page_title="Label Tracking Extractor",
-    layout="wide"
+    page_title="FedEx Tracking Extractor"
 )
 
-st.title("Label Tracking Extractor")
+st.title("FedEx Tracking Extractor")
 
-uploaded_files = st.file_uploader(
+files = st.file_uploader(
     "PDF 또는 ZPL 업로드",
     accept_multiple_files=True
 )
 
-tracking_numbers = set()
+results = set()
 
 
-def extract_from_zpl(text):
+def extract_zpl(text):
 
     matches = set()
 
@@ -28,7 +30,7 @@ def extract_from_zpl(text):
 
         r"31Z(96\d{32})",
 
-        r"\b(96\d{32})\b"
+        r"\b(96\d{32})\b",
     ]
 
     for pattern in patterns:
@@ -43,43 +45,74 @@ def extract_from_zpl(text):
     return matches
 
 
-if uploaded_files:
+def extract_pdf_barcodes(pdf_bytes):
+
+    found = set()
+
+    doc = fitz.open(
+        stream=pdf_bytes,
+        filetype="pdf"
+    )
+
+    for page in doc:
+
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(
+                4,
+                4
+            )
+        )
+
+        img = Image.frombytes(
+            "RGB",
+            [pix.width, pix.height],
+            pix.samples
+        )
+
+        decoded = decode(img)
+
+        for barcode in decoded:
+
+            try:
+
+                data = barcode.data.decode(
+                    "utf-8"
+                )
+
+                fedex = re.findall(
+                    r"96\d{32}",
+                    data
+                )
+
+                found.update(fedex)
+
+            except:
+                pass
+
+    return found
+
+
+if files:
 
     progress = st.progress(0)
 
-    for idx, file in enumerate(uploaded_files):
+    for i, file in enumerate(files):
+
+        found = set()
 
         try:
 
-            text = ""
-            numbers_found = set()
-
-            is_pdf = file.name.lower().endswith(
+            if file.name.lower().endswith(
                 ".pdf"
-            )
+            ):
 
-            # =====================
-            # PDF
-            # =====================
+                pdf_bytes = file.read()
 
-            if is_pdf:
-
-                with pdfplumber.open(
-                    file
-                ) as pdf:
-
-                    for page in pdf.pages:
-
-                        page_text = page.extract_text()
-
-                        if page_text:
-
-                            text += page_text
-                            text += "\n"
-
-            # =====================
-            # ZPL
-            # =====================
+                found.update(
+                    extract_pdf_barcodes(
+                        pdf_bytes
+                    )
+                )
 
             else:
 
@@ -88,47 +121,33 @@ if uploaded_files:
                     errors="ignore"
                 )
 
-                numbers_found.update(
-                    extract_from_zpl(text)
+                found.update(
+                    extract_zpl(text)
                 )
 
-            tracking_numbers.update(
-                numbers_found
-            )
+            results.update(found)
 
             with st.expander(
                 f"Debug - {file.name}"
             ):
 
                 st.write(
-                    f"추출 건수: {len(numbers_found)}"
+                    f"추출 건수: {len(found)}"
                 )
 
-                if numbers_found:
+                if found:
 
                     st.code(
                         "\n".join(
-                            sorted(
-                                numbers_found
-                            )
+                            sorted(found)
                         )
                     )
 
                 else:
 
                     st.write(
-                        "FedEx Tracking Number 미발견"
+                        "Tracking Number 미발견"
                     )
-
-                st.markdown("---")
-
-                st.write(
-                    "PDF/ZPL 원본 추출 텍스트"
-                )
-
-                st.code(
-                    text[:3000]
-                )
 
         except Exception as e:
 
@@ -137,40 +156,29 @@ if uploaded_files:
             )
 
         progress.progress(
-            (idx + 1)
-            / len(uploaded_files)
+            (i + 1) / len(files)
         )
 
-    result = sorted(
-        tracking_numbers
-    )
-
-    if result:
+    if results:
 
         df = pd.DataFrame({
-            "Tracking Number": result
+            "Tracking Number":
+            sorted(results)
         })
 
         st.success(
-            f"{len(result)}개 Tracking Number 추출 완료"
+            f"{len(df)}개 추출 완료"
         )
 
-        st.dataframe(
-            df,
-            use_container_width=True
-        )
-
-        csv = df.to_csv(
-            index=False
-        ).encode(
-            "utf-8-sig"
-        )
+        st.dataframe(df)
 
         st.download_button(
             "CSV 다운로드",
-            csv,
-            file_name="tracking_numbers.csv",
-            mime="text/csv"
+            df.to_csv(
+                index=False
+            ).encode("utf-8-sig"),
+            "tracking_numbers.csv",
+            "text/csv"
         )
 
     else:
