@@ -17,28 +17,28 @@ uploaded_files = st.file_uploader(
 
 tracking_numbers = set()
 
-FEDEX_PATTERN = r"96\d{32}"
 
+def extract_from_zpl(text):
 
-def clean_text(text):
-    return re.sub(
-        r"[^0-9A-Z]",
-        "",
-        text.upper()
-    )
+    matches = set()
 
+    patterns = [
 
-def extract_fedex_numbers(text):
+        r">;?(96\d{32})",
 
-    if not text:
-        return []
+        r"31Z(96\d{32})",
 
-    cleaned = clean_text(text)
+        r"\b(96\d{32})\b"
+    ]
 
-    matches = re.findall(
-        FEDEX_PATTERN,
-        cleaned
-    )
+    for pattern in patterns:
+
+        found = re.findall(
+            pattern,
+            text
+        )
+
+        matches.update(found)
 
     return matches
 
@@ -54,30 +54,28 @@ if uploaded_files:
             text = ""
             numbers_found = set()
 
+            is_pdf = file.name.lower().endswith(
+                ".pdf"
+            )
+
             # =====================
             # PDF
             # =====================
 
-            if file.name.lower().endswith(".pdf"):
+            if is_pdf:
 
-                try:
+                with pdfplumber.open(
+                    file
+                ) as pdf:
 
-                    with pdfplumber.open(file) as pdf:
+                    for page in pdf.pages:
 
-                        for page in pdf.pages:
+                        page_text = page.extract_text()
 
-                            page_text = page.extract_text()
+                        if page_text:
 
-                            if page_text:
-
-                                text += page_text
-                                text += "\n"
-
-                except Exception as e:
-
-                    st.error(
-                        f"{file.name} PDF 읽기 실패 : {e}"
-                    )
+                            text += page_text
+                            text += "\n"
 
             # =====================
             # ZPL
@@ -90,21 +88,13 @@ if uploaded_files:
                     errors="ignore"
                 )
 
-            # =====================
-            # 추출
-            # =====================
-
-            numbers_found.update(
-                extract_fedex_numbers(text)
-            )
+                numbers_found.update(
+                    extract_from_zpl(text)
+                )
 
             tracking_numbers.update(
                 numbers_found
             )
-
-            # =====================
-            # 디버그
-            # =====================
 
             with st.expander(
                 f"Debug - {file.name}"
@@ -118,7 +108,9 @@ if uploaded_files:
 
                     st.code(
                         "\n".join(
-                            sorted(numbers_found)
+                            sorted(
+                                numbers_found
+                            )
                         )
                     )
 
@@ -130,20 +122,12 @@ if uploaded_files:
 
                 st.markdown("---")
 
-                st.write("PDF/ZPL 원본 추출 텍스트")
-
-                st.code(
-                    text[:5000]
-                )
-
-                st.markdown("---")
-
                 st.write(
-                    "공백 제거 후 숫자 확인"
+                    "PDF/ZPL 원본 추출 텍스트"
                 )
 
                 st.code(
-                    clean_text(text)[:5000]
+                    text[:3000]
                 )
 
         except Exception as e:
@@ -153,7 +137,8 @@ if uploaded_files:
             )
 
         progress.progress(
-            (idx + 1) / len(uploaded_files)
+            (idx + 1)
+            / len(uploaded_files)
         )
 
     result = sorted(
@@ -182,8 +167,8 @@ if uploaded_files:
         )
 
         st.download_button(
-            label="CSV 다운로드",
-            data=csv,
+            "CSV 다운로드",
+            csv,
             file_name="tracking_numbers.csv",
             mime="text/csv"
         )
