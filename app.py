@@ -16,8 +16,8 @@ st.title("FedEx Tracking Extractor")
 if "files" not in st.session_state:
     st.session_state.files = {}
 
-if "tracking_numbers" not in st.session_state:
-    st.session_state.tracking_numbers = set()
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = 0
 
 # =====================================
 # 함수
@@ -45,8 +45,27 @@ def extract_tracking_from_zpl(text):
     return matches
 
 
+def extract_tracking_from_pdf_filename(filename):
+
+    match = re.search(
+        r"_(\d{12})\.pdf$",
+        filename,
+        re.IGNORECASE
+    )
+
+    if not match:
+        return None
+
+    last12 = match.group(1)
+
+    return (
+        "962208043000093514410087"
+        + last12
+    )
+
+
 # =====================================
-# 상단 메뉴
+# 상단 버튼
 # =====================================
 
 col1, col2 = st.columns([1, 1])
@@ -63,12 +82,14 @@ with col2:
     if st.button("전체 초기화"):
 
         st.session_state.files = {}
-        st.session_state.tracking_numbers = set()
+
+        # uploader 초기화
+        st.session_state.uploader_key += 1
 
         st.rerun()
 
 # =====================================
-# 현재 파일 수
+# 파일 수 표시
 # =====================================
 
 st.info(
@@ -76,12 +97,13 @@ st.info(
 )
 
 # =====================================
-# 파일 업로드
+# 업로드
 # =====================================
 
 uploaded_files = st.file_uploader(
     "PDF 또는 ZPL 업로드",
-    accept_multiple_files=True
+    accept_multiple_files=True,
+    key=f"uploader_{st.session_state.uploader_key}"
 )
 
 if uploaded_files:
@@ -96,29 +118,26 @@ if uploaded_files:
             duplicate_count += 1
             continue
 
-        file_bytes = file.getvalue()
-
-        st.session_state.files[file.name] = {
-            "name": file.name,
-            "bytes": file_bytes
-        }
+        st.session_state.files[file.name] = (
+            file.getvalue()
+        )
 
         added_count += 1
 
-    if added_count > 0:
+    if added_count:
 
         st.success(
-            f"{added_count}개 파일 추가됨"
+            f"✅ {added_count}개 파일 추가됨"
         )
 
-    if duplicate_count > 0:
+    if duplicate_count:
 
         st.warning(
-            f"{duplicate_count}개 중복 파일 제외됨"
+            f"⚠️ {duplicate_count}개 중복 파일 제외됨"
         )
 
 # =====================================
-# 현재 파일 목록
+# 파일 목록
 # =====================================
 
 if st.session_state.files:
@@ -134,70 +153,59 @@ if st.session_state.files:
             st.write(filename)
 
 # =====================================
-# 파일 처리
+# Tracking 추출
 # =====================================
 
 tracking_numbers = set()
 
-for filename, file_data in st.session_state.files.items():
+for filename, file_bytes in st.session_state.files.items():
 
     numbers_found = set()
 
     try:
 
-        # ------------------------------
+        # --------------------------------
         # PDF
-        # ------------------------------
+        # --------------------------------
 
         if filename.lower().endswith(".pdf"):
 
-            # PDF 파일명 마지막 12자리 추출
-            match = re.search(
-                r"_(\d{12})\.pdf$",
-                filename,
-                re.IGNORECASE
+            tracking = (
+                extract_tracking_from_pdf_filename(
+                    filename
+                )
             )
 
-            if match:
-
-                last12 = match.group(1)
-
-                tracking_number = (
-                    "962208043000093514410087"
-                    + last12
-                )
+            if tracking:
 
                 numbers_found.add(
-                    tracking_number
+                    tracking
                 )
 
-        # ------------------------------
+        # --------------------------------
         # ZPL
-        # ------------------------------
+        # --------------------------------
 
         else:
 
-            try:
+            text = file_bytes.decode(
+                "utf-8",
+                errors="ignore"
+            )
 
-                text = file_data["bytes"].decode(
-                    "utf-8",
-                    errors="ignore"
+            numbers_found.update(
+                extract_tracking_from_zpl(
+                    text
                 )
-
-                numbers_found.update(
-                    extract_tracking_from_zpl(text)
-                )
-
-            except Exception:
-                pass
+            )
 
         tracking_numbers.update(
             numbers_found
         )
 
-        # ------------------------------
+        # --------------------------------
         # Debug
-        # ------------------------------
+        # --------------------------------
 
         if show_debug:
 
@@ -213,7 +221,9 @@ for filename, file_data in st.session_state.files.items():
 
                     st.code(
                         "\n".join(
-                            sorted(numbers_found)
+                            sorted(
+                                numbers_found
+                            )
                         )
                     )
 
@@ -230,7 +240,7 @@ for filename, file_data in st.session_state.files.items():
         )
 
 # =====================================
-# 결과
+# 결과 출력
 # =====================================
 
 if tracking_numbers:
@@ -239,9 +249,11 @@ if tracking_numbers:
         tracking_numbers
     )
 
-    df = pd.DataFrame({
-        "Tracking Number": result
-    })
+    df = pd.DataFrame(
+        {
+            "Tracking Number": result
+        }
+    )
 
     st.success(
         f"{len(result)}개 Tracking Number 추출 완료"
