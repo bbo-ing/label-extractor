@@ -1,3 +1,7 @@
 streamlit
 pandas
 pdfplumber
+pdf2image
+pillow
+pyzbar
+pymupdf
